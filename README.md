@@ -31,3 +31,9 @@ Things to ensure
 - Go backend saves the metadata of the submission in local postgres, and pushes the job to a queue (perhaps rabbitmq)
 - The judge instance keeps pulling jobs from the queue, sets up proper constraints, and security stuff. (sandbox)
 - Cache for tcs maybe?
+
+
+## File Structure
+- cmd : Stores the entry point for the API
+- internal : Stores the judging code, and database
+- api : some other api stuff
