@@ -24,8 +24,3 @@ Building a **competitive programming judge system**:
 - Run them securely in isolated environments
 - Evaluate against test cases
 - Return verdicts (AC / WA / TLE / RE)
-
-## running
-
-```bash
-go run ./cmd/api
