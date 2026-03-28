@@ -24,3 +24,10 @@ Building a **competitive programming judge system**:
 - Run them securely in isolated environments
 - Evaluate against test cases
 - Return verdicts (AC / WA / TLE / RE)
+
+
+Things to ensure
+- nginx API gateway (reverse proxy, and acts as a ratelimiter too)
+- Go backend saves the metadata of the submission in local postgres, and pushes the job to a queue (perhaps rabbitmq)
+- The judge instance keeps pulling jobs from the queue, sets up proper constraints, and security stuff. (sandbox)
+- Cache for tcs maybe?
