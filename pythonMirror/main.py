@@ -30,3 +30,42 @@ Sandbox:
     - Specific CPU speed (idk how to do this)
     - Worker crash -> job retry
 """
+
+from fastapi import FastAPI
+from pydantic import BaseModel
+import threading
+
+from db import create_submission, get_submission
+from worker import add_job, worker_loop
+
+app = FastAPI()
+
+
+class Submission(BaseModel):
+    code: str
+
+
+@app.on_event("startup")
+def start_worker():
+    thread = threading.Thread(target=worker_loop, daemon=True)
+    thread.start()
+
+
+@app.post("/submit")
+def submit_code(sub: Submission):
+    sub_id = create_submission(sub.code)
+    add_job(sub_id, sub.code)
+    return {"submission_id": sub_id}
+
+
+@app.get("/result/{submission_id}")
+def get_result(submission_id: int):
+    row = get_submission(submission_id)
+    if not row:
+        return {"error": "Not found"}
+
+    return {
+        "id": row[0],
+        "status": row[2],
+        "output": row[3]
+    }
