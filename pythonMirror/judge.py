@@ -1,22 +1,31 @@
 from sandbox import run_code
 
-TEST_CASES = [
-    ("2 3\n", "5\n"),
-    ("10 20\n", "30\n"),
-]
+def judge_submission(code, language, question_id):
+    input_path = f"Questions/{question_id}_in.txt"
+    output_path = f"Questions/{question_id}_out.txt"
 
+    with open(input_path) as f:
+        inp = f.read()
 
-def judge_submission(code: str):
-    for inp, expected in TEST_CASES:
-        out, err = run_code(code, inp)
+    with open(output_path) as f:
+        expected = f.read()
 
-        if err == "TLE":
-            return "TLE", ""
+    out, err = run_code(
+        code,
+        language,
+        inp
+    )
 
-        if err:
-            return "RUNTIME_ERROR", err
+    if err == "TLE":
+        return "TLE", ""
 
-        if out.strip() != expected.strip():
-            return "WRONG_ANSWER", f"Expected {expected}, got {out}"
+    if err:
+        return "RUNTIME_ERROR", err
+
+    if out.strip() != expected.strip():
+        return (
+            "WRONG_ANSWER",
+            f"Expected {expected}, got {out}"
+        )
 
     return "ACCEPTED", "All test cases passed"

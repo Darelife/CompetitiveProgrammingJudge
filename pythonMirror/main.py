@@ -31,6 +31,7 @@ Sandbox:
     - Worker crash -> job retry
 """
 
+from typing import Literal, Union
 from fastapi import FastAPI
 from pydantic import BaseModel
 import threading
@@ -40,10 +41,10 @@ from worker import add_job, worker_loop
 
 app = FastAPI()
 
-
 class Submission(BaseModel):
     code: str
-
+    language: Literal["python3", "cpp17"]
+    question_id: str
 
 @app.on_event("startup")
 def start_worker():
@@ -53,8 +54,19 @@ def start_worker():
 
 @app.post("/submit")
 def submit_code(sub: Submission):
-    sub_id = create_submission(sub.code)
-    add_job(sub_id, sub.code)
+    sub_id = create_submission(
+        sub.code,
+        sub.language,
+        sub.question_id
+    )
+
+    add_job(
+        sub_id,
+        sub.code,
+        sub.language,
+        sub.question_id
+    )
+
     return {"submission_id": sub_id}
 
 
@@ -66,6 +78,8 @@ def get_result(submission_id: int):
 
     return {
         "id": row[0],
-        "status": row[2],
-        "output": row[3]
+        "language": row[2],
+        "question_id": row[3],
+        "status": row[4],
+        "output": row[5]
     }
