@@ -1,57 +1,71 @@
-// ============================================================
-// FILE: internal/transport/handlers.go
-// ROLE: HTTP layer. Parses every POST /submit request, delegates to judge,
-//       and returns the HTTP response.
-//
-// STEP-BY-STEP FLOW inside HandleSubmission():
-//
-//   [1] Decode JSON body  ──▶  extract req.Code
-//         └─ if missing/invalid ──▶ 400 Bad Request
-//
-//   [2] Delegate to judge package  ──▶  judge.Evaluate(req.Code)
-//         └─ it handles compiling, diffing, executing.
-//
-//   [3] Send HTTP response  ──▶  200 OK + SubmissionResponse {verdict}
-//         └─ if judge errors  ──▶ sends error code + error message
-// ============================================================
 package transport
 
 import (
-	"encoding/json"
 	"net/http"
+	"strconv"
 
-	"github.com/darelife/competitiveprogrammingjudge/internal/judge"
-	"github.com/darelife/competitiveprogrammingjudge/internal/models"
+	"github.com/gin-gonic/gin"
+
+	"judge/internal/db"
+	"judge/internal/models"
+	"judge/internal/queue"
 )
 
-// HandleSubmission parses the incoming request and delegates
-// the compilation and execution to the judge package.
-func HandleSubmission(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req models.SubmissionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
-		sendJSONError(w, "Invalid request: 'code' field required", http.StatusBadRequest)
-		return
-	}
-
-	// Delegate judging logic to external package for cleaner separation
-	resp, judgeErr := judge.Evaluate(req.Code)
-	if judgeErr != nil {
-		sendJSONError(w, judgeErr.Message, judgeErr.Code)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+func RegisterRoutes(router *gin.Engine) {
+	router.POST("/submit", SubmitHandler)
+	router.GET("/result/:id", ResultHandler)
 }
 
-func sendJSONError(w http.ResponseWriter, msg string, code int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+func SubmitHandler(c *gin.Context) {
+	var submission models.Submission
+
+	if err := c.ShouldBindJSON(&submission); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	id, err := db.CreateSubmission(
+		submission.Code,
+		submission.Language,
+		submission.QuestionID,
+	)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	submission.ID = int(id)
+
+	queue.JobQueue <- submission
+
+	c.JSON(http.StatusOK, gin.H{
+		"submission_id": id,
+	})
+}
+
+func ResultHandler(c *gin.Context) {
+	idParam := c.Param("id")
+
+	id, err := strconv.Atoi(idParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid ID",
+		})
+		return
+	}
+
+	result, err := db.GetSubmission(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Submission not found",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }

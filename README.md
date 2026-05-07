@@ -38,7 +38,7 @@ Things to ensure:
 - `data/` — Test case input and expected output files
 
 ---
-
+<!--
 ## Current Pipeline
 
 
@@ -167,3 +167,58 @@ line 1:
 | `WA` | Wrong Answer — output differs; `diff` field shows what's wrong |
 | HTTP 422 | Compile error or runtime error (details in `error` field) |
 | HTTP 400 | Bad request — missing `code` field |
+-->
+
+
+````md
+# Build Sandbox
+
+```bash
+docker build -f Dockerfile.sandbox -t cpp-py-sandbox .
+```
+
+# Install Dependencies
+
+```bash
+go mod tidy
+```
+
+# Run Server
+
+```bash
+go run ./cmd/server
+```
+
+# Submit C++
+
+```bash
+curl -X POST "http://127.0.0.1:4000/submit" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n \
+    --rawfile code solution.cpp \
+    '{
+      code: $code,
+      language: "cpp17",
+      question_id: "a"
+    }')"
+```
+
+# Submit Python
+
+```bash
+curl -X POST "http://127.0.0.1:4000/submit" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n \
+    --rawfile code solution.py \
+    '{
+      code: $code,
+      language: "python3",
+      question_id: "a"
+    }')"
+```
+
+# Get Result
+
+```bash
+curl "http://127.0.0.1:4000/result/1"
+```

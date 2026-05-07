@@ -1,32 +1,28 @@
-// ============================================================
-// FILE: cmd/server/main.go
-// ROLE: Entry point for the judge HTTP server.
-//
-// FLOW:
-//   1. Register a single route:  POST /submit  →  transport.HandleSubmission
-//   2. Start listening on :8080
-//   3. Every incoming request is handled by the transport layer (see
-//      internal/transport/handlers.go) which does the actual judging.
-//
-// PIPELINE POSITION:
-//   [Client] ──HTTP POST /submit──▶ [Server :8080] ──▶ [Handler]
-// ============================================================
 package main
 
 import (
-	"fmt"
 	"log"
-	"net/http"
 
-	"github.com/darelife/competitiveprogrammingjudge/internal/transport"
+	"github.com/gin-gonic/gin"
+
+	"judge/internal/db"
+	"judge/internal/transport"
+	"judge/internal/worker"
 )
 
 func main() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/submit", transport.HandleSubmission)
-
-	fmt.Println("Judge server running on :8080")
-	if err := http.ListenAndServe(":8080", mux); err != nil {
+	err := db.Init()
+	if err != nil {
 		log.Fatal(err)
 	}
+
+	worker.StartWorker()
+
+	router := gin.Default()
+
+	transport.RegisterRoutes(router)
+
+	log.Println("Server started on :4000")
+
+	router.Run(":4000")
 }
