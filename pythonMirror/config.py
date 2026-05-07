@@ -2,6 +2,3 @@ TIME_LIMIT_SECONDS = 2
 MEMORY_LIMIT_MB = 128
 RETRY_COUNT = 2
 SANDBOX_IMAGE = "cpp-py-sandbox"
-
-DOCKER_IMAGE = "python:3.10-slim"
-WORKDIR = "/app"
