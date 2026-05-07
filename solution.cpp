@@ -1,1 +1,32 @@
-{"code":"#include \u003ciostream\u003e\nusing namespace std;\nint main() {\n    int a, b, c, d, e;\n    cin \u003e\u003e a \u003e\u003e b \u003e\u003e c \u003e\u003e d \u003e\u003e e;\n    cout \u003c\u003c e \u003c\u003c \" \" \u003c\u003c d \u003c\u003c \" \" \u003c\u003c c \u003c\u003c \" \" \u003c\u003c b \u003c\u003c \" \" \u003c\u003c a \u003c\u003c endl;\n    return 0;\n}\n"}
+#include <bits/stdc++.h>
+using namespace std;
+#define int long long
+
+signed main() {
+    int t;
+    cin >> t;
+    while(t--) {
+        int n;
+        cin >> n;
+        vector<int> v(n + 1), cnt(n + 1);
+        for(int i = 1; i <= n; i++) {
+            cin >> v[i];
+            cnt[v[i]]++;
+        }
+
+        vector<int> have(n + 1);
+        have[n] = cnt[n];
+        for(int i = n - 1; i >= 1; i--) have[i] = have[i + 1] + cnt[i];
+
+        int init = 0, aft = 0;
+        for(int i = 1; i <= n; i++) {
+            init += i * v[i];
+            aft += have[i] * (2 * n - have[i] + 1) / 2;
+        }
+
+        int cur = aft - init, mx = 0;
+        for(int i = 1; i <= n; i++) mx = max(mx, i - n + have[v[i]] - 1);
+
+        cout << cur + mx << endl;
+    }
+}
