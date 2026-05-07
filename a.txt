@@ -1,0 +1,665 @@
+# GoLang Competitive Programming Judge
+
+## Project Structure
+
+```text
+.
+├── cmd
+│   └── server
+│       └── main.go
+├── internal
+│   ├── db
+│   │   └── db.go
+│   ├── judge
+│   │   └── judge.go
+│   ├── models
+│   │   └── submission.go
+│   ├── queue
+│   │   └── queue.go
+│   ├── sandbox
+│   │   └── sandbox.go
+│   ├── transport
+│   │   └── handlers.go
+│   └── worker
+│       └── worker.go
+├── Questions
+│   ├── a_in.txt
+│   └── a_out.txt
+├── Dockerfile.sandbox
+├── go.mod
+└── README.md
+```
+
+---
+
+# go.mod
+
+```go
+module judge
+
+go 1.22
+
+require (
+	github.com/gin-gonic/gin v1.10.0
+	github.com/mattn/go-sqlite3 v1.14.22
+)
+```
+
+---
+
+# Dockerfile.sandbox
+
+```dockerfile
+FROM alpine:3.18
+
+RUN apk add --no-cache \
+    g++ \
+    musl-dev \
+    python3 \
+    py3-pip \
+    coreutils \
+    && ln -sf python3 /usr/bin/python
+
+RUN adduser -D -u 1000 sandbox
+
+WORKDIR /workspace
+USER sandbox
+```
+
+---
+
+# internal/models/submission.go
+
+```go
+package models
+
+type Submission struct {
+	ID         int    `json:"id"`
+	Code       string `json:"code"`
+	Language   string `json:"language"`
+	QuestionID string `json:"question_id"`
+	Status     string `json:"status"`
+	Output     string `json:"output"`
+}
+```
+
+---
+
+# internal/db/db.go
+
+```go
+package db
+
+import (
+	"database/sql"
+	_ "github.com/mattn/go-sqlite3"
+)
+
+var DB *sql.DB
+
+func Init() error {
+	var err error
+
+	DB, err = sql.Open("sqlite3", "judge.db")
+	if err != nil {
+		return err
+	}
+
+	query := `
+	CREATE TABLE IF NOT EXISTS submissions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		code TEXT,
+		language TEXT,
+		question_id TEXT,
+		status TEXT,
+		output TEXT
+	)
+	`
+
+	_, err = DB.Exec(query)
+	return err
+}
+
+func CreateSubmission(code, language, questionID string) (int64, error) {
+	result, err := DB.Exec(
+		`INSERT INTO submissions
+		(code, language, question_id, status, output)
+		VALUES (?, ?, ?, ?, ?)`,
+		code,
+		language,
+		questionID,
+		"PENDING",
+		"",
+	)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return result.LastInsertId()
+}
+
+func UpdateSubmission(id int, status, output string) error {
+	_, err := DB.Exec(
+		"UPDATE submissions SET status=?, output=? WHERE id=?",
+		status,
+		output,
+		id,
+	)
+
+	return err
+}
+
+func GetSubmission(id int) (map[string]interface{}, error) {
+	row := DB.QueryRow(
+		"SELECT id, language, question_id, status, output FROM submissions WHERE id=?",
+		id,
+	)
+
+	var submissionID int
+	var language string
+	var questionID string
+	var status string
+	var output string
+
+	err := row.Scan(
+		&submissionID,
+		&language,
+		&questionID,
+		&status,
+		&output,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"id":          submissionID,
+		"language":    language,
+		"question_id": questionID,
+		"status":      status,
+		"output":      output,
+	}, nil
+}
+```
+
+---
+
+# internal/queue/queue.go
+
+```go
+package queue
+
+import "judge/internal/models"
+
+var JobQueue = make(chan models.Submission, 100)
+```
+
+---
+
+# internal/sandbox/sandbox.go
+
+```go
+package sandbox
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+const (
+	MemoryLimitMB   = 128
+	TimeLimitSecond = 2
+	SandboxImage    = "cpp-py-sandbox"
+)
+
+func RunCode(code, language, inputData string) (string, string) {
+	tmpdir, err := os.MkdirTemp("", "judge-*")
+	if err != nil {
+		return "", err.Error()
+	}
+	defer os.RemoveAll(tmpdir)
+
+	var sourceName string
+
+	switch language {
+	case "python3":
+		sourceName = "main.py"
+	case "cpp17":
+		sourceName = "main.cpp"
+	default:
+		return "", "Unsupported language"
+	}
+
+	sourcePath := filepath.Join(tmpdir, sourceName)
+	inputPath := filepath.Join(tmpdir, "input.txt")
+
+	err = os.WriteFile(sourcePath, []byte(code), 0644)
+	if err != nil {
+		return "", err.Error()
+	}
+
+	err = os.WriteFile(inputPath, []byte(inputData), 0644)
+	if err != nil {
+		return "", err.Error()
+	}
+
+	if language == "python3" {
+		return runPython(tmpdir)
+	}
+
+	return runCPP(tmpdir)
+}
+
+func runPython(tmpdir string) (string, string) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		time.Duration(TimeLimitSecond+2)*time.Second,
+	)
+	defer cancel()
+
+	cmd := exec.CommandContext(
+		ctx,
+		"docker",
+		"run",
+		"--rm",
+		"--network",
+		"none",
+		"--cap-drop",
+		"ALL",
+		"--security-opt",
+		"no-new-privileges",
+		"--memory",
+		"128m",
+		"--cpus",
+		"1",
+		"--read-only",
+		"--tmpfs",
+		"/tmp:rw,noexec,nosuid,size=50m",
+		"-u",
+		"1000:1000",
+		"-v",
+		tmpdir+":/workspace:rw",
+		"-w",
+		"/workspace",
+		SandboxImage,
+		"sh",
+		"-c",
+		"timeout 2 python3 main.py < input.txt",
+	)
+
+	output, err := cmd.CombinedOutput()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", "TLE"
+	}
+
+	if err != nil {
+		if strings.Contains(string(output), "124") {
+			return "", "TLE"
+		}
+		return "", string(output)
+	}
+
+	return string(output), ""
+}
+
+func runCPP(tmpdir string) (string, string) {
+	compileCtx, compileCancel := context.WithTimeout(
+		context.Background(),
+		30*time.Second,
+	)
+	defer compileCancel()
+
+	compileCmd := exec.CommandContext(
+		compileCtx,
+		"docker",
+		"run",
+		"--rm",
+		"--network",
+		"none",
+		"--cap-drop",
+		"ALL",
+		"--security-opt",
+		"no-new-privileges",
+		"--memory",
+		"128m",
+		"--cpus",
+		"1",
+		"-u",
+		"1000:1000",
+		"-v",
+		tmpdir+":/workspace:rw",
+		"-w",
+		"/workspace",
+		SandboxImage,
+		"g++",
+		"main.cpp",
+		"-std=c++17",
+		"-O2",
+		"-o",
+		"program",
+	)
+
+	compileOutput, err := compileCmd.CombinedOutput()
+	if err != nil {
+		return "", string(compileOutput)
+	}
+
+	runCtx, runCancel := context.WithTimeout(
+		context.Background(),
+		time.Duration(TimeLimitSecond+2)*time.Second,
+	)
+	defer runCancel()
+
+	runCmd := exec.CommandContext(
+		runCtx,
+		"docker",
+		"run",
+		"--rm",
+		"--network",
+		"none",
+		"--cap-drop",
+		"ALL",
+		"--security-opt",
+		"no-new-privileges",
+		"--memory",
+		"128m",
+		"--cpus",
+		"1",
+		"--read-only",
+		"--tmpfs",
+		"/tmp:rw,noexec,nosuid,size=50m",
+		"-u",
+		"1000:1000",
+		"-v",
+		tmpdir+":/workspace:rw",
+		"-w",
+		"/workspace",
+		SandboxImage,
+		"sh",
+		"-c",
+		"timeout 2 ./program < input.txt",
+	)
+
+	output, err := runCmd.CombinedOutput()
+
+	if runCtx.Err() == context.DeadlineExceeded {
+		return "", "TLE"
+	}
+
+	if err != nil {
+		return "", string(output)
+	}
+
+	return string(output), ""
+}
+```
+
+---
+
+# internal/judge/judge.go
+
+```go
+package judge
+
+import (
+	"os"
+	"strings"
+
+	"judge/internal/sandbox"
+)
+
+func JudgeSubmission(code, language, questionID string) (string, string) {
+	inputPath := "Questions/" + questionID + "_in.txt"
+	outputPath := "Questions/" + questionID + "_out.txt"
+
+	inputData, err := os.ReadFile(inputPath)
+	if err != nil {
+		return "SYSTEM_ERROR", err.Error()
+	}
+
+	expectedOutput, err := os.ReadFile(outputPath)
+	if err != nil {
+		return "SYSTEM_ERROR", err.Error()
+	}
+
+	out, runtimeErr := sandbox.RunCode(
+		code,
+		language,
+		string(inputData),
+	)
+
+	if runtimeErr == "TLE" {
+		return "TLE", ""
+	}
+
+	if runtimeErr != "" {
+		return "RUNTIME_ERROR", runtimeErr
+	}
+
+	if strings.TrimSpace(out) != strings.TrimSpace(string(expectedOutput)) {
+		return "WRONG_ANSWER", "Output mismatch"
+	}
+
+	return "ACCEPTED", "All test cases passed"
+}
+```
+
+---
+
+# internal/worker/worker.go
+
+```go
+package worker
+
+import (
+	"fmt"
+
+	"judge/internal/db"
+	"judge/internal/judge"
+	"judge/internal/queue"
+)
+
+func StartWorker() {
+	go func() {
+		fmt.Println("Worker started...")
+
+		for job := range queue.JobQueue {
+			status, output := judge.JudgeSubmission(
+				job.Code,
+				job.Language,
+				job.QuestionID,
+			)
+
+			db.UpdateSubmission(
+				job.ID,
+				status,
+				output,
+			)
+
+			fmt.Printf(
+				"Processed submission %d: %s\n",
+				job.ID,
+				status,
+			)
+		}
+	}()
+}
+```
+
+---
+
+# internal/transport/handlers.go
+
+```go
+package transport
+
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+
+	"judge/internal/db"
+	"judge/internal/models"
+	"judge/internal/queue"
+)
+
+func RegisterRoutes(router *gin.Engine) {
+	router.POST("/submit", SubmitHandler)
+	router.GET("/result/:id", ResultHandler)
+}
+
+func SubmitHandler(c *gin.Context) {
+	var submission models.Submission
+
+	if err := c.ShouldBindJSON(&submission); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	id, err := db.CreateSubmission(
+		submission.Code,
+		submission.Language,
+		submission.QuestionID,
+	)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	submission.ID = int(id)
+
+	queue.JobQueue <- submission
+
+	c.JSON(http.StatusOK, gin.H{
+		"submission_id": id,
+	})
+}
+
+func ResultHandler(c *gin.Context) {
+	idParam := c.Param("id")
+
+	id, err := strconv.Atoi(idParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid ID",
+		})
+		return
+	}
+
+	result, err := db.GetSubmission(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Submission not found",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+```
+
+---
+
+# cmd/server/main.go
+
+```go
+package main
+
+import (
+	"log"
+
+	"github.com/gin-gonic/gin"
+
+	"judge/internal/db"
+	"judge/internal/transport"
+	"judge/internal/worker"
+)
+
+func main() {
+	err := db.Init()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	worker.StartWorker()
+
+	router := gin.Default()
+
+	transport.RegisterRoutes(router)
+
+	log.Println("Server started on :4000")
+
+	router.Run(":4000")
+}
+```
+
+---
+
+# README.md
+
+````md
+# Build Sandbox
+
+```bash
+docker build -f Dockerfile.sandbox -t cpp-py-sandbox .
+```
+
+# Install Dependencies
+
+```bash
+go mod tidy
+```
+
+# Run Server
+
+```bash
+go run ./cmd/server
+```
+
+# Submit C++
+
+```bash
+curl -X POST "http://127.0.0.1:4000/submit" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n \
+    --rawfile code solution.cpp \
+    '{
+      code: $code,
+      language: "cpp17",
+      question_id: "a"
+    }')"
+```
+
+# Submit Python
+
+```bash
+curl -X POST "http://127.0.0.1:4000/submit" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n \
+    --rawfile code solution.py \
+    '{
+      code: $code,
+      language: "python3",
+      question_id: "a"
+    }')"
+```
+
+# Get Result
+
+```bash
+curl "http://127.0.0.1:4000/result/1"
+```
+````
