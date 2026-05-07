@@ -35,7 +35,21 @@ Things to ensure:
 
 - `cmd/` — Entry point for the API server
 - `internal/` — Judging logic, transport handlers, and database layer
-- `data/` — Test case input and expected output files
+<!--- `data/` — Test case input and expected output files-->
+
+## Phases
+
+1. Phase 1 (current): Single-node async judge
+
+2. Phase 2: Redis queue + separate workers
+
+3. Phase 3: Multiple worker processes
+
+4. Phase 4: Workers on multiple VMs
+
+5. Phase 5: Autoscaling + orchestration
+
+6. Phase 6: Result streaming + realtime updates
 
 ---
 <!--
